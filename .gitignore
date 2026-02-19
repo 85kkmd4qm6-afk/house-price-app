@@ -1,0 +1,19 @@
+# Python / cache
+__pycache__/
+*.pyc
+*.pyo
+
+# Virtual environments
+.venv/
+venv/
+
+# Local databases / big files
+*.duckdb
+*.db
+
+# Data (keep only small sample if you choose)
+data/ppd.csv
+data/onspd.csv
+
+# macOS
+.DS_Store
