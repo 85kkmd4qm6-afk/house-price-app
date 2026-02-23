@@ -4,6 +4,7 @@
 import os
 import sys
 import subprocess
+import time
 from datetime import date
 import re
 
@@ -14,50 +15,63 @@ import plotly.express as px
 
 try:
     import pydeck as pdk
-except Exception:
+on except Exception:
     pdk = None  # map tab will degrade gracefully
 
 DB_PATH = "app.duckdb"
-
-
-# -----------------------
-# Helpers
-# -----------------------
-def normalize_postcode(pc: str) -> str:
-    """Normalize postcode to a compact uppercase form without spaces."""
-    if not pc:
-        return ""
-    return re.sub(r"\s+", "", pc.strip().upper())
+LOCK_PATH = ".building_db.lock"
 
 
 def ensure_db_exists():
-    """Build app.duckdb if missing (Streamlit Cloud needs this)."""
+    """Build app.duckdb if missing (cloud-safe, avoids repeated messages)."""
     if os.path.exists(DB_PATH):
         return
 
-    st.info("First run on this server: building the database from CSV…")
-
-    # Use the same interpreter Streamlit is running (fixes missing duckdb in subprocess)
-    result = subprocess.run(
-        [sys.executable, "build_db.py"],
-        capture_output=True,
-        text=True,
-    )
-
-    if result.returncode != 0:
-        st.error("Database build failed (build_db.py crashed). Full output:")
-        st.code((result.stdout or "") + "\n" + (result.stderr or ""))
+    # If another run is building the DB, wait rather than starting again.
+    if os.path.exists(LOCK_PATH):
+        with st.spinner("Database is currently being built… please wait"):
+            for _ in range(120):  # wait up to ~120 seconds
+                time.sleep(1)
+                if os.path.exists(DB_PATH):
+                    return
+        st.error("Database build is taking too long. Reboot the app in Manage app.")
         st.stop()
 
-    if not os.path.exists(DB_PATH):
-        st.error("Database build finished but app.duckdb was not created.")
-        st.stop()
+    # Create lock so only one run builds.
+    with open(LOCK_PATH, "w") as f:
+        f.write("building")
+
+    status_box = st.empty()
+    try:
+        with status_box.status("First run: building database from CSV…", expanded=False):
+            result = subprocess.run(
+                [sys.executable, "build_db.py"],
+                capture_output=True,
+                text=True,
+            )
+
+            if result.returncode != 0:
+                st.error("build_db.py failed. Output:")
+                st.code((result.stdout or "") + "\n" + (result.stderr or ""))
+                st.stop()
+
+            if not os.path.exists(DB_PATH):
+                st.error("Database build finished but app.duckdb was not created.")
+                st.stop()
+    finally:
+        # Remove lock whether build succeeded or failed
+        try:
+            os.remove(LOCK_PATH)
+        except FileNotFoundError:
+            pass
+
+        # Clear the status box so it doesn't remain on the page
+        status_box.empty()
 
 
 @st.cache_resource
 def get_con() -> duckdb.DuckDBPyConnection:
     ensure_db_exists()
-    # Read-only is fine after creation; if you ever want to write, set read_only=False
     return duckdb.connect(DB_PATH, read_only=True)
 
 
@@ -65,8 +79,8 @@ def get_con() -> duckdb.DuckDBPyConnection:
 def table_exists(table_name: str) -> bool:
     con = get_con()
     q = """
-    SELECT COUNT(*) 
-    FROM information_schema.tables 
+    SELECT COUNT(*)
+    FROM information_schema.tables
     WHERE table_schema='main' AND table_name = ?;
     """
     return con.execute(q, [table_name]).fetchone()[0] > 0
