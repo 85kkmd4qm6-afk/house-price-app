@@ -15,7 +15,7 @@ import plotly.express as px
 
 try:
     import pydeck as pdk
-on except Exception:
+except Exception:
     pdk = None  # map tab will degrade gracefully
 
 DB_PATH = "app.duckdb"
