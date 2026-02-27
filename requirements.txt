@@ -4,3 +4,5 @@ duckdb
 plotly
 pydeck
 numpy
+psycopg[binary]
+sqlalchemy
