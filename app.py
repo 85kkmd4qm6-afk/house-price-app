@@ -29,10 +29,35 @@ def normalize_postcode(pc: str) -> str:
 # Database helpers
 # -----------------------------
 @st.cache_resource
-def get_pg():
-    # Put DATABASE_URL in Streamlit Cloud Secrets:
-    # DATABASE_URL = "postgres://...sslmode=require"
+def get_pg_conn():
+    # Create one connection per Streamlit session/process
     return psycopg.connect(st.secrets["DATABASE_URL"])
+
+def get_pg():
+    """
+    Return a working connection.
+    Neon/Streamlit can close idle conns, so recreate if closed.
+    """
+    conn = get_pg_conn()
+    try:
+        # psycopg3: conn.closed is 0 when open, non-zero when closed
+        if getattr(conn, "closed", 1) != 0:
+            raise psycopg.OperationalError("cached connection closed")
+        # lightweight ping
+        conn.execute("SELECT 1;")
+        return conn
+    except Exception:
+        # Clear cached resource and reconnect
+        get_pg_conn.clear()
+        return get_pg_conn()
+
+def run_query(sql: str, params=None) -> pd.DataFrame:
+    conn = get_pg()
+    with conn.cursor() as cur:
+        cur.execute(sql, params or [])
+        cols = [d[0] for d in cur.description]
+        rows = cur.fetchall()
+    return pd.DataFrame(rows, columns=cols)
 
 
 def run_query(sql: str, params=None) -> pd.DataFrame:
